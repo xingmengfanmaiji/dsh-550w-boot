@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>harness-a</title>
+<!--
+  Real-clock harness.
+
+  Loads the built browser half exactly as the shell does (define the loader
+  facade, then the plugin bundle), applies it, and observes the whole lifecycle
+  with real timers, including whether the animation inside the srcdoc iframe
+  actually runs its own script. Run with --virtual-time-budget so headless
+  Chromium fast-forwards the clock, then read the dumped DOM.
+-->
+<script>
+  window.__ModuleLoader__ = {
+    mode: 'queue',
+    pendingQueue: [],
+    load(registration) { this.pendingQueue.push(registration) },
+  }
+</script>
+<script src="../lib/client.js"></script>
+</head>
+<body>
+<div id="root"><p>application ui</p></div>
+<div id="results">HARNESS-A</div>
+<script>
+  const results = document.getElementById('results')
+  const seen = new Set()
+  function note(line) {
+    if (seen.has(line)) return
+    seen.add(line)
+    const div = document.createElement('div')
+    div.textContent = line
+    results.appendChild(div)
+  }
+  function check(name, condition, extra) {
+    note((condition ? 'PASS ' : 'FAIL ') + name + (extra === undefined ? '' : ' :: ' + extra))
+  }
+
+  const registration = window.__ModuleLoader__.pendingQueue[0]
+  check('bundle registered one factory', !!registration, registration && registration.id)
+
+  let mod = null
+  try {
+    mod = registration.factory(function () { throw new Error('unexpected require') })
+    check('module materialized', !!mod)
+  } catch (error) {
+    check('module materialized', false, String(error && error.message))
+  }
+
+  const plugin = mod && (mod.default || mod.plugin)
+  check('exports a plugin with apply()', !!plugin && typeof plugin.apply === 'function')
+  check('plugin name', !!plugin && plugin.name === 'boot550w', plugin && plugin.name)
+
+  const disposers = []
+  const ctx = { effect(fn) { disposers.push(fn) } }
+
+  try {
+    plugin.apply(ctx)
+    check('apply() did not throw', true)
+  } catch (error) {
+    check('apply() did not throw', false, String(error && error.message))
+  }
+
+  const overlay = document.getElementById('dsh-550w-boot-overlay')
+  const frame = document.getElementById('dsh-550w-boot-frame')
+  const catcher = document.getElementById('dsh-550w-boot-catcher')
+  const hint = document.getElementById('dsh-550w-boot-hint')
+  const guard = document.getElementById('dsh-550w-boot-guard')
+
+  check('overlay mounted on body', !!overlay && overlay.parentNode === document.body)
+  check('overlay is fixed and on top', !!overlay
+    && overlay.style.position === 'fixed'
+    && overlay.style.zIndex === '2147483000', overlay && overlay.style.zIndex)
+  check('overlay is opaque', !!overlay && overlay.style.opacity === '1', overlay && overlay.style.opacity)
+  check('overlay paints an opaque backdrop', !!overlay
+    && overlay.style.background === 'rgb(5, 5, 5)', overlay && overlay.style.background)
+  check('iframe mounted inside the overlay', !!frame && frame.parentNode === overlay)
+  check('iframe carries the animation as srcdoc', !!frame
+    && typeof frame.srcdoc === 'string' && frame.srcdoc.length > 10000, frame && frame.srcdoc.length)
+  check('srcdoc is the 550W document', !!frame && frame.srcdoc.indexOf('550W') !== -1)
+  check('guard hides #root while the animation plays', !!guard
+    && guard.textContent.indexOf('#root') !== -1, guard && guard.textContent)
+  check('catcher sits above the frame', !!catcher && catcher.parentNode === overlay)
+  check('hint starts hidden', !!hint && hint.style.opacity === '0', hint && hint.textContent)
+  check('console handle exposed', !!window.__dsh550w)
+
+  /* Observe the animation inside the iframe. srcdoc documents are same-origin,
+     so the parent can read them; this is exactly what proves the animation's own
+     script executed rather than the markup merely being present. */
+  let maxLogLines = 0
+  let bannerShown = false
+  let subShown = false
+  let chartDrawn = false
+
+  const probe = setInterval(function () {
+    const live = document.getElementById('dsh-550w-boot-frame')
+    const doc = live && live.contentDocument
+    if (!doc) return
+    const lines = doc.querySelectorAll('#logScroll > div').length
+    if (lines > maxLogLines) maxLogLines = lines
+    const banner = doc.getElementById('winBanner')
+    if (banner && banner.classList.contains('show')) bannerShown = true
+    const sub = doc.getElementById('bannerSub')
+    if (sub && sub.classList.contains('show')) subShown = true
+    const chart = doc.getElementById('chartCv')
+    if (chart && chart.width > 0) chartDrawn = true
+
+    note('PROBE logs=' + maxLogLines + ' banner=' + bannerShown + ' sub=' + subShown + ' chart=' + chartDrawn)
+
+    if (maxLogLines > 0) check('animation script ran in the iframe (log lines appear)', true, 'lines=' + maxLogLines)
+    if (bannerShown) check('animation reached its banner', true)
+    if (subShown) check('animation reached its final subtitle', true)
+    if (chartDrawn) check('animation canvas was sized and drawn', true)
+
+    const overlayNow = document.getElementById('dsh-550w-boot-overlay')
+    if (!overlayNow) {
+      check('overlay removed itself after the fade', true)
+      check('guard removed with it', !document.getElementById('dsh-550w-boot-guard'))
+      clearInterval(probe)
+      note('HARNESS-A COMPLETE')
+    }
+  }, 150)
+
+  /* Safety net: report the state at the end of the virtual budget even if the
+     overlay never cleared, so a failure is visible rather than silent. */
+  setTimeout(function () {
+    check('overlay removed itself after the fade', !document.getElementById('dsh-550w-boot-overlay'))
+    check('guard removed with it', !document.getElementById('dsh-550w-boot-guard'))
+    note('HARNESS-A DEADLINE logs=' + maxLogLines + ' banner=' + bannerShown + ' sub=' + subShown)
+  }, 11000)
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Bundle patch for dsh-550w-boot.
+#
+# The row points at the HOST half (the package name). It must never point at
+# `dsh-550w-boot/client`: that specifier resolves to a classic browser script,
+# which the host cannot import, and the failure surfaces as a bare "failed to
+# import" that says nothing about the real cause. The browser half is located
+# through package.json exports["./client"] and delivered to the page by the
+# /plugins bundle route.
+#
+# Keep this file pure ASCII: a `//` first line (invalid in YAML) and full-width
+# punctuation in comments have broken the overlay parser before.
+
+- insert:
+    - id: boot550w
+      name: "dsh-550w-boot"

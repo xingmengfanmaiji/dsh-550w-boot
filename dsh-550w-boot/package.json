@@ -1,0 +1,61 @@
+{
+  "name": "dsh-550w-boot",
+  "version": "1.0.0",
+  "description": "Unofficial DSH desktop plugin: plays a full-screen HTML boot animation (default: the 550W interface from the workspace) before the DeepSeek Harness UI appears, then fades out. Click or press any key to skip.",
+  "type": "module",
+  "private": true,
+  "main": "lib/index.js",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis-plugin",
+    "boot-animation",
+    "splash",
+    "550w"
+  ],
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/client.template.js",
+    "build.mjs",
+    "verify.mjs",
+    "install.mjs",
+    "uninstall.mjs",
+    "cordis.patch.yml",
+    "animation/",
+    "README.zh-CN.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "verify": "node verify.mjs",
+    "test": "node build.mjs && node verify.mjs",
+    "deploy": "node install.mjs",
+    "undeploy": "node uninstall.mjs"
+  },
+  "dependencies": {},
+  "peerDependencies": {},
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "title": {
+        "en": "550W Boot Animation",
+        "zh": "550W 启动动画"
+      }
+    }
+  }
+}

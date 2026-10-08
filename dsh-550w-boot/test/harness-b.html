@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>harness-b</title>
+<!--
+  Deterministic harness.
+
+  The plugin schedules its own work on requestAnimationFrame + performance.now
+  precisely so the deadline is wall-clock based rather than a frame count. That
+  also makes it testable without waiting: this page replaces both before the
+  bundle loads and drives time by hand with step(ms). Every assertion below
+  therefore runs synchronously, and the dumped DOM is the complete result.
+
+  The animation iframe is NOT fast-forwarded (it keeps its own real timers);
+  this harness only checks that the frame is mounted and taken down correctly.
+-->
+<script>
+  window.__ModuleLoader__ = {
+    mode: 'queue',
+    pendingQueue: [],
+    load(registration) { this.pendingQueue.push(registration) },
+  }
+
+  /* ---- controllable clock, installed before the bundle runs ---- */
+  let fakeNow = 0
+  let rafSeq = 1
+  const rafQueue = new Map()
+  window.requestAnimationFrame = function (cb) { const id = rafSeq++; rafQueue.set(id, cb); return id }
+  window.cancelAnimationFrame = function (id) { rafQueue.delete(id) }
+  performance.now = function () { return fakeNow }
+
+  function step(ms) {
+    fakeNow += ms
+    const pending = Array.from(rafQueue.values())
+    rafQueue.clear()
+    for (const cb of pending) cb(fakeNow)
+    return fakeNow
+  }
+</script>
+<script src="../lib/client.js"></script>
+</head>
+<body>
+<div id="root"><p>application ui</p></div>
+<div id="results">HARNESS-B</div>
+<script>
+  const results = document.getElementById('results')
+  function check(name, condition, extra) {
+    const div = document.createElement('div')
+    div.textContent = (condition ? 'PASS ' : 'FAIL ') + name + (extra === undefined ? '' : ' :: ' + extra)
+    results.appendChild(div)
+  }
+  const q = (id) => document.getElementById(id)
+
+  const registration = window.__ModuleLoader__.pendingQueue[0]
+  const mod = registration.factory(function () { throw new Error('unexpected require') })
+  const plugin = mod.default || mod.plugin
+
+  const disposers = []
+  const ctx = { effect(fn) { disposers.push(fn) } }
+
+  plugin.apply(ctx)
+  check('mount: overlay present', !!q('dsh-550w-boot-overlay'))
+  check('mount: guard hides #root', !!q('dsh-550w-boot-guard'))
+  check('mount: hint hidden at t=0', q('dsh-550w-boot-hint').style.opacity === '0')
+
+  /* Re-applying must not stack a second overlay (one splash per page load). */
+  plugin.apply(ctx)
+  check('re-apply: still exactly one overlay',
+    document.querySelectorAll('#dsh-550w-boot-overlay').length === 1,
+    document.querySelectorAll('#dsh-550w-boot-overlay').length)
+
+  step(1500)
+  check('t+1500: hint faded in', q('dsh-550w-boot-hint').style.opacity === '1',
+    q('dsh-550w-boot-hint').style.opacity)
+
+  step(2000)
+  check('t+3500: overlay still fully opaque', q('dsh-550w-boot-overlay').style.opacity === '1',
+    q('dsh-550w-boot-overlay').style.opacity)
+  check('t+3500: app still hidden', !!q('dsh-550w-boot-guard'))
+
+  step(4000)
+  const fading = q('dsh-550w-boot-overlay')
+  check('t+7500: deadline passed, fade started', !!fading && fading.style.opacity === '0',
+    fading && fading.style.opacity)
+  check('t+7500: app revealed as the fade starts', !q('dsh-550w-boot-guard'))
+  check('t+7500: overlay still in the DOM while fading', !!fading)
+
+  step(900)
+  check('t+8400: overlay removed after the fade', !q('dsh-550w-boot-overlay'))
+
+  /* Plugin unload must leave nothing behind - a stuck guard would hide the app
+     with nothing left to reveal it. */
+  let teardownThrew = null
+  try {
+    for (const fn of disposers) fn()
+  } catch (error) { teardownThrew = String(error && error.message) }
+  check('teardown: disposer ran without throwing', teardownThrew === null, teardownThrew || '')
+  check('teardown: nothing left in the DOM',
+    !q('dsh-550w-boot-overlay') && !q('dsh-550w-boot-guard'))
+
+  /* Console replay. */
+  window.__dsh550w.play()
+  check('replay: overlay back', !!q('dsh-550w-boot-overlay'))
+  check('replay: guard back', !!q('dsh-550w-boot-guard'))
+
+  /* Skip by pointer. */
+  q('dsh-550w-boot-catcher').click()
+  check('skip by click: app revealed immediately', !q('dsh-550w-boot-guard'))
+  step(900)
+  check('skip by click: overlay removed', !q('dsh-550w-boot-overlay'))
+
+  /* Skip by key. */
+  window.__dsh550w.play()
+  check('replay after skip: overlay back', !!q('dsh-550w-boot-overlay'))
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  check('skip by key: app revealed', !q('dsh-550w-boot-guard'))
+  step(900)
+  check('skip by key: overlay removed', !q('dsh-550w-boot-overlay'))
+
+  /* A modifier-only press must NOT skip. */
+  window.__dsh550w.play()
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true }))
+  check('modifier-only key does not skip', !!q('dsh-550w-boot-overlay'))
+  q('dsh-550w-boot-catcher').click()
+  step(900)
+  check('cleanup after modifier case', !q('dsh-550w-boot-overlay') && !q('dsh-550w-boot-guard'))
+
+  /* Every rAF callback the plugin scheduled must have been unregistered, or it
+     would keep waking up for the lifetime of the page. */
+  check('no rAF callbacks left scheduled', rafQueue.size === 0, 'pending=' + rafQueue.size)
+
+  results.appendChild(document.createElement('div')).textContent = 'HARNESS-B COMPLETE'
+</script>
+</body>
+</html>

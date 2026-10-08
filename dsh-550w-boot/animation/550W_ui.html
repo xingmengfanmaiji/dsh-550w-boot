@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自编译系统 · 550W 覆写与本地握手</title>
+<style>
+  :root{
+    --org:#f0a028;
+    --org-deep:#c97f10;
+    --org-dim:#8a5a10;
+    --bg:#050505;
+    --win-bg:#0b0b0b;
+    --txt:#d8d8d8;
+    --grn:#39c46a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{width:100%;height:100%;overflow:hidden;}
+  body{
+    background:var(--bg);
+    font-family:"Microsoft YaHei","Cascadia Code",Consolas,monospace;
+    color:var(--txt);
+    cursor:default;
+    user-select:none;
+  }
+
+  /* ===== 顶栏 ===== */
+  #menubar{
+    height:34px;display:flex;align-items:center;gap:26px;
+    padding:0 14px;background:#000;
+    border-bottom:1px solid #1a1a1a;
+    position:relative;z-index:50;
+  }
+  #menubar .app{color:var(--org);font-size:14px;letter-spacing:1px;margin-right:12px;}
+  #menubar .mi{font-size:13px;color:#cfcfcf;padding:2px 4px;}
+  #menubar .mi:hover{background:var(--org);color:#000;}
+
+  /* ===== 工具栏 ===== */
+  #toolbar{
+    height:40px;display:flex;align-items:center;gap:8px;
+    padding:0 10px;background:#000;
+    border-bottom:2px solid var(--org);
+    position:relative;z-index:50;
+  }
+  .tbtn{
+    background:#000;color:#e8e8e8;border:1px solid #444;
+    font-size:12px;padding:5px 14px;letter-spacing:1px;
+  }
+  .tbtn.hl{background:var(--org);color:#000;border-color:var(--org);font-weight:bold;}
+  .tbtn.small{padding:5px 10px;}
+  #searchbox{
+    border:1px solid #444;background:#000;color:#888;font-size:12px;
+    padding:5px 10px;width:130px;
+  }
+  #navR{margin-left:auto;display:flex;gap:8px;}
+  #navR .tbtn{background:var(--org);color:#000;border-color:var(--org);font-weight:bold;}
+
+  /* ===== 窗口通用 ===== */
+  .win{
+    position:absolute;background:var(--win-bg);
+    border:1px solid var(--org-dim);
+    box-shadow:0 0 0 1px #000, 0 8px 30px rgba(0,0,0,.8);
+    display:none;flex-direction:column;
+    min-width:200px;
+  }
+  .win.show{display:flex;animation:winOpen .25s ease;}
+  @keyframes winOpen{from{transform:scale(.96);opacity:0;}to{transform:scale(1);opacity:1;}}
+  /* 横幅专用动画：保留 translate 居中，避免弹出瞬间跳位 */
+  #winBanner.show{animation:bannerOpen .25s ease;}
+  @keyframes bannerOpen{from{transform:translate(-50%,-50%) scale(.96);opacity:0;}to{transform:translate(-50%,-50%) scale(1);opacity:1;}}
+  .titlebar{
+    height:22px;background:var(--org);color:#1a1000;
+    display:flex;align-items:center;
+    font-size:11px;padding-left:8px;letter-spacing:1px;
+    cursor:move;flex:none;
+  }
+  .titlebar .x{
+    margin-left:auto;width:20px;height:22px;background:#e03131;color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;
+  }
+  .winbody{flex:1;overflow:hidden;position:relative;}
+
+  /* ===== 日志窗 ===== */
+  #winLog{left:24px;top:92px;width:56%;height:calc(100vh - 210px);z-index:10;}
+  #logScroll{height:100%;overflow-y:hidden;padding:8px 10px;
+    font-family:Consolas,monospace;font-size:12px;line-height:1.55;color:#cfcfcf;}
+  #logScroll .pct{color:#fff;}
+  #logScroll .dir{color:#9fdfb2;}
+
+  /* ===== 系统信息窗 ===== */
+  #winInfo{right:26px;top:31%;width:300px;z-index:20;}
+  #infoBody{padding:12px 16px;font-size:12.5px;line-height:1.9;}
+  #infoBody .k{color:#e8e8e8;}
+  #infoBody .v{color:#f0f0f0;font-weight:bold;}
+  #infoBody .dev-h{margin-top:10px;color:#e8e8e8;}
+  #infoBody .dev{color:var(--org);white-space:nowrap;overflow:hidden;}
+  .caret{display:inline-block;width:7px;height:13px;background:var(--org);vertical-align:-2px;animation:blink .9s steps(1) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+
+  /* ===== 背景空窗 ===== */
+  #winBg1{left:64%;top:92px;width:31%;height:32%;z-index:5;}
+  #winBg2{left:8%;top:calc(100vh - 120px);width:82%;height:70px;z-index:4;}
+
+  /* ===== 图像 Verified 状态窗 ===== */
+  #winBg1 .winbody{padding:14px 16px;font-size:12.5px;line-height:1.85;}
+  #winBg1 .vhead{color:var(--org);font-size:15px;font-weight:bold;letter-spacing:2px;}
+  #winBg1 .vtick{color:var(--grn);}
+  #winBg1 .vline{color:#e8e8e8;margin-top:6px;}
+  #winBg1 .vbar{margin-top:12px;height:6px;background:#151515;border:1px solid #333;}
+  #winBg1 .vbar i{display:block;height:100%;width:100%;background:var(--grn);box-shadow:0 0 8px rgba(57,196,106,.6);}
+  #winBg1 .vmeta{margin-top:9px;color:#9fdfb2;font-family:Consolas,monospace;letter-spacing:1px;}
+
+  /* ===== 折线图窗 ===== */
+  #winChart{left:9%;top:19%;width:80%;height:58%;z-index:15;}
+  #chartCv{width:100%;height:100%;display:block;background:#060606;}
+
+  /* ===== 覆写横幅 ===== */
+  #winBanner{
+    left:50%;top:42%;transform:translate(-50%,-50%);
+    width:620px;max-width:86vw;z-index:40;
+    border:2px solid var(--org);
+  }
+  #bannerBody{
+    padding:44px 10px;text-align:center;background:#000;
+  }
+  #bannerBody .big{
+    color:var(--org);font-size:44px;font-weight:bold;letter-spacing:22px;
+    text-shadow:0 0 22px rgba(240,160,40,.55);
+    font-family:"Microsoft YaHei",sans-serif;
+    white-space:nowrap;
+  }
+  #bannerBody .sub{
+    margin-top:20px;color:var(--org);font-size:17px;letter-spacing:8px;
+    font-family:"Microsoft YaHei",sans-serif;
+    opacity:0;transition:opacity .6s;
+  }
+  #bannerBody .sub.show{opacity:1;}
+
+  /* ===== 重播 & 时间码 ===== */
+  #replay{
+    position:fixed;right:14px;bottom:12px;z-index:60;
+    background:#000;color:var(--org);border:1px solid var(--org);
+    font-size:12px;padding:6px 16px;letter-spacing:2px;cursor:pointer;
+    font-family:inherit;display:none;
+  }
+  #replay.show{display:block;}
+  #replay:hover{background:var(--org);color:#000;}
+  #tc{
+    position:fixed;left:14px;bottom:12px;z-index:60;
+    color:#555;font-size:11px;letter-spacing:2px;font-family:Consolas,monospace;
+  }
+  ::-webkit-scrollbar{width:8px;background:#0b0b0b;}
+  ::-webkit-scrollbar-thumb{background:var(--org-dim);}
+</style>
+</head>
+<body>
+
+<div id="menubar">
+  <span class="app">自编译系统</span>
+  <span class="mi">文件</span><span class="mi">编辑</span><span class="mi">视图</span>
+  <span class="mi">工程</span><span class="mi">调试</span><span class="mi">测试</span>
+  <span class="mi">分析</span><span class="mi">窗口</span><span class="mi">帮助</span>
+</div>
+
+<div id="toolbar">
+  <button class="tbtn" style="min-width:150px;">本地系统调试器 ▾</button>
+  <button class="tbtn hl">自动 ▾</button>
+  <button class="tbtn">调试 ▾</button>
+  <button class="tbtn">测试 ▾</button>
+  <button class="tbtn small">网络</button>
+  <button class="tbtn small">节点</button>
+  <button class="tbtn small">日志</button>
+  <input id="searchbox" placeholder="搜索">
+  <div id="navR">
+    <span class="tbtn navCode">UEG联合政府</span>
+  </div>
+</div>
+
+<!-- 背景空窗 -->
+<div class="win" id="winBg1">
+  <div class="titlebar">图像 Verified 行<span class="x">✕</span></div>
+  <div class="winbody" id="bg1Body">
+    <div class="vstat">
+      <div class="vhead">VERIFIED <span class="vtick">✓</span></div>
+      <div class="vline">镜像完整性校验通过</div>
+      <div class="vbar"><i></i></div>
+      <div class="vmeta">校验项 128 / 128 · SHA-256 匹配</div>
+    </div>
+  </div>
+</div>
+<div class="win" id="winBg2">
+  <div class="titlebar">内核 缓冲 行<span class="x">✕</span></div>
+  <div class="winbody"></div>
+</div>
+
+<!-- 生成日志窗 -->
+<div class="win" id="winLog">
+  <div class="titlebar">图像 Verified 行<span class="x">✕</span></div>
+  <div class="winbody"><div id="logScroll"></div></div>
+</div>
+
+<!-- 系统信息窗 -->
+<div class="win" id="winInfo">
+  <div class="titlebar">系统 属性 概述<span class="x">✕</span></div>
+  <div class="winbody"><div id="infoBody"></div></div>
+</div>
+
+<!-- 折线图窗 -->
+<div class="win" id="winChart">
+  <div class="titlebar">渲染 负载 波形<span class="x">✕</span></div>
+  <div class="winbody"><canvas id="chartCv"></canvas></div>
+</div>
+
+<!-- 覆写横幅 -->
+<div class="win" id="winBanner">
+  <div class="titlebar">系统 控制权 通知<span class="x">✕</span></div>
+  <div class="winbody" id="bannerBody">
+    <div class="big" id="bannerCode" style="letter-spacing:10px;margin-bottom:18px;">550W</div>
+    <div class="big">系统已覆写</div>
+    <div class="sub" id="bannerSub">本地握手成功</div>
+  </div>
+</div>
+
+<div id="tc">550W:23.0.055.0&nbsp;&nbsp;|&nbsp;&nbsp;LINK:--</div>
+<button id="replay">▶ 重新执行</button>
+
+<script>
+/* ================= 工具：拖动窗口 ================= */
+document.querySelectorAll('.win').forEach(w=>{
+  const bar=w.querySelector('.titlebar');
+  bar.addEventListener('mousedown',e=>{
+    if(e.target.classList.contains('x'))return;
+    const r=w.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;
+    w.style.left=r.left+'px';w.style.top=r.top+'px';w.style.right='auto';w.style.transform='none';
+    const mv=ev=>{w.style.left=(ev.clientX-ox)+'px';w.style.top=(ev.clientY-oy)+'px';};
+    const up=()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up);};
+    addEventListener('mousemove',mv);addEventListener('mouseup',up);
+  });
+  w.querySelector('.x').addEventListener('click',()=>w.classList.remove('show'));
+});
+
+/* ================= 日志生成 ================= */
+const NAMES=[
+ "VirtualSurroundAppl.dll","nsis.dll","Microsoft.WindowsSearch.Commands.Resources.dll","NOF",
+ "c_fsactivitymonitor.inf","xwizard.exe","wifidisplay.dll","ndisharev4.gpd","whrnm.ini",
+ "TigerKekePECH-LP.cot","Education-OEM-DM-2-ul-qob-test-xrm-ms","ndsVirtualBus.inf_amd64_9956f922e32dase",
+ "MigratedVcsOneDrive 目录","Hyper-V-KernelVSP-Package-3fbf3856ad364e35-amd64--zh-CN-10.0.2",
+ "V_coreActivation_zh-CN.dat","WMPPhoto.dll","WindowsFoldersControl.dll",
+ "Windows-Hyper-V-OptionalFeature-HypervisorPlatform-Disa","sheres.dll","wircortex.ini",
+ "netr7366.inf_amd64_93 2fd468e5f30d4","SPowerShelV1.0.0.Modules|Microsoft.PowerShell.LocalAccounts\1.0.0\lfr",
+ "dmusic.dll.mui","ucbhd.inf_amd64_7437d5bdf59b5b24","Restore","syscoli.dll","cortana_es-ES_hdsp",
+ "Hyper-V-Networking-VirtualDevice-Synthetic-merged-Package","WsoExt.dll","kbd101.dll","mdmfs6S.inf",
+ "Microsoft-Windows-WordPad-FoD-Package","[05E92F4D-C044-492A-81EC-0B7IC7689462).catalogitem","fw",
+ "tzsync.exe","dfrgui.exe","mfx_hnf_h265ve_32.dll","tclkhlostw.exe","gpmrefr_fr-FR.mui","modemosinf",
+ "Ntseyvr.lnt","TpmTasks.dll.mui","UsageDataFlushing"
+];
+const logEl=document.getElementById('logScroll');
+let genTimer=null;
+
+function logLine(){
+  const pct=LOG_STATE.p;
+  const size=(Math.random()*8000+500).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,",");
+  const name=NAMES[Math.floor(Math.random()*NAMES.length)];
+  const d=document.createElement('div');
+  const roll=Math.random();
+  if(roll<0.06){
+    d.innerHTML=`<span class="pct">${pct.toFixed(1)}%&nbsp;&nbsp;</span><span class="dir">GENERATING 目录</span>`;
+  }else if(roll<0.12){
+    d.innerHTML=`<span class="pct">${pct.toFixed(1)}%&nbsp;&nbsp;</span>GENERATING ...`;
+  }else{
+    d.innerHTML=`<span class="pct">${pct.toFixed(1)}%&nbsp;&nbsp;</span>GENERATING ${size} ${name}`;
+  }
+  logEl.appendChild(d);
+  while(logEl.children.length>60)logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop=logEl.scrollHeight;
+}
+
+/* ================= 系统信息打字 ================= */
+const INFO=[
+ ['操作系统：','550W底层'],
+ ['版本:','23.0.055.0'],
+ ['所有者：','地球联合政府'],
+ ['CPU L1缓存:','152GB'],
+ ['图形化显存:','48TB'],
+ ['最大渲染能力:','128x MSAA'],
+];
+const DEVICES=[
+ '地球联合政府 无人及控制系统',
+ '地球联合政府 敌我识别系统',
+ '地球联合政府 主动防御',
+ '地球联合政府 太空电梯控制',
+ '地球联合政府 月球发动机控制',
+ '地球联合政府 领航者空间站',
+ '地球联合政府 行星发动机控制',
+];
+const infoBody=document.getElementById('infoBody');
+function typeInfo(done){
+  let i=0,j=0;
+  let cur=null;
+  (function step(){
+    if(i<INFO.length){
+      if(j===0){cur=document.createElement('div');infoBody.appendChild(cur);}
+      cur.innerHTML=`<span class="k">${INFO[i][0]}</span><span class="v">${INFO[i][1].slice(0,j)}</span><span class="caret"></span>`;
+      j++;
+        if(j>INFO[i][1].length){i++;j=0;setTimeout(step,80);}
+        else setTimeout(step,16);
+      }else{
+        const h=document.createElement('div');
+        h.className='dev-h';h.textContent='已挂载设备:';
+        infoBody.appendChild(h);
+        let k=0;
+        (function dev(){
+          if(k>=DEVICES.length){done&&done();return;}
+          const d=document.createElement('div');
+          d.className='dev';d.textContent=DEVICES[k];
+          infoBody.appendChild(d);k++;
+          setTimeout(dev,130);
+        })();
+    }
+  })();
+}
+
+/* ================= 折线图 ================= */
+const cv=document.getElementById('chartCv'),cx=cv.getContext('2d');
+let chartOn=false,pts=[],tPhase=0;
+function fitCanvas(){
+  const r=cv.getBoundingClientRect();
+  cv.width=r.width;cv.height=r.height;
+}
+addEventListener('resize',fitCanvas);
+function drawChart(){
+  if(!chartOn)return;
+  fitCanvas();
+  const W=cv.width,H=cv.height;
+  cx.fillStyle='#060606';cx.fillRect(0,0,W,H);
+  cx.strokeStyle='#1c1c1c';cx.lineWidth=1;
+  for(let y=30;y<H;y+=46){cx.beginPath();cx.moveTo(0,y);cx.lineTo(W,y);cx.stroke();}
+  cx.strokeStyle='#2a2a2a';
+  for(let x=60;x<W;x+=120){cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();}
+  // 波形：前段剧烈震荡，后段趋稳（代表系统被逐步接管）
+  tPhase++;
+  const target = tPhase<140 ? (Math.random()*0.9+0.05) : 0.62+(Math.random()-0.5)*0.06;
+  pts.push(target);
+  if(pts.length>90)pts.shift();
+  cx.strokeStyle='#2f9e55';cx.lineWidth=1.6;
+  cx.beginPath();
+  pts.forEach((v,i)=>{
+    const x=(i/(90-1))*W, y=H-20-v*(H-50);
+    i?cx.lineTo(x,y):cx.moveTo(x,y);
+  });
+  cx.stroke();
+  cx.fillStyle='#39c46a';
+  pts.forEach((v,i)=>{
+    const x=(i/(90-1))*W, y=H-20-v*(H-50);
+    if(i%3===0){cx.beginPath();cx.arc(x,y,3,0,7);cx.fill();}
+  });
+  requestAnimationFrame(drawChart);
+}
+
+/* ================= 主时间线 ================= */
+const LOG_STATE={p:0};
+const LINK=document.getElementById('tc');
+/* show 提升为全局，供 run() 与 openBanner() 共用 */
+const show=(id,d)=>setTimeout(()=>document.getElementById(id).classList.add('show'),d);
+function run(){
+  // 复位
+  document.querySelectorAll('.win').forEach(w=>w.classList.remove('show'));
+  logEl.innerHTML='';infoBody.innerHTML='';
+  document.getElementById('bannerSub').classList.remove('show');
+  document.getElementById('replay').classList.remove('show');
+  pts=[];tPhase=0;chartOn=false;
+  LOG_STATE.p=0;
+  clearInterval(genTimer);
+
+  show('winBg1',150);
+  show('winBg2',200);
+  show('winLog',280);
+
+  // 日志推进：0→100，约 2.8 秒快滚
+  setTimeout(()=>{
+    genTimer=setInterval(()=>{
+      LOG_STATE.p+=Math.random()*1.7+0.9;
+      if(LOG_STATE.p>=100){
+        LOG_STATE.p=100;
+        clearInterval(genTimer);
+        logLine();
+        setTimeout(openBanner,180);
+      }
+      logLine();
+    },38);
+  },320);
+
+  // 系统信息窗
+  setTimeout(()=>{show('winInfo',0);typeInfo();},950);
+  LINK.textContent='LINK:握手建立中';
+
+  // 折线图窗
+  setTimeout(()=>{show('winChart',0);fitCanvas();chartOn=true;drawChart();},1500);
+}
+
+function openBanner(){
+  // 100% 后让中央图表窗与背景空窗退场、停止绘制，把焦点交给横幅
+  chartOn=false;
+  document.getElementById('winChart').classList.remove('show');
+  document.getElementById('winBg1').classList.remove('show');
+  document.getElementById('winBg2').classList.remove('show');
+  show('winBanner',0);
+  LINK.textContent='LINK:已覆写 · 加密';
+  setTimeout(()=>{
+    document.getElementById('bannerSub').classList.add('show');
+    document.getElementById('replay').classList.add('show');
+  },800);
+}
+
+document.getElementById('replay').addEventListener('click',run);
+run();
+</script>
+</body>
+</html>
